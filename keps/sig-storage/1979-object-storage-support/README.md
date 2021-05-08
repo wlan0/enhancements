@@ -26,7 +26,7 @@
     - [Topology](#topology)
 - [Object Relationships](#object-relationships)
 - [Workflows](#workflows)
-    - [Finalizers](#finalizers)
+  - [Finalizers](#finalizers)
   - [Create Bucket](#create-bucket)
   - [Sharing COSI Created Buckets](#sharing-cosi-created-buckets)
   - [Delete Bucket](#delete-bucket)
@@ -126,7 +126,7 @@ When a workload (app pod, deployment, configs) is moved to another cluster, as l
 + _greenfield bucket_ - a new backend bucket created by COSI.
 + _green-to-brownfield_ - a use-case where COSI creates a new bucket on behalf of a user, and then supports ways for other users in the cluster to share this bucket.
 + _provisioner_ - a generic term meant to describe the combination of a sidecar and driver. "Provisioning" a bucket can mean creating a new bucket or granting access to an existing bucket.
-+ _sidecar_ - a Kubernetes-aware container (usually paired with a driver) that is responsible for fullfilling COSI requests with the driver via gRPC calls. The sidecar's access should be restricted to the namespace where it resides, which is expected to be the same namespace as the provisioner. The COSI sidecar is provided by the Kubernetes community.
++ _sidecar_ - a Kubernetes-aware container (usually paired with a driver) that fulfills COSI requests with the driver via gRPC calls. The sidecar's access should be restricted to the namespace where it resides, which is expected to be the same namespace as the provisioner. The COSI sidecar is provided by the Kubernetes community.
 + _static provisioning_ - the admin manually creates the `Bucket` instance representing properties of the target backend bucket.
 
 # Proposal
@@ -137,9 +137,9 @@ When a workload (app pod, deployment, configs) is moved to another cluster, as l
 
 #### BucketRequest
 
-A user facing, namespaced, immutable, custom resource requesting the creation of a new bucket. A `BucketRequest` (BR) lives in the app's namespace.  In addition to a BR, a [BucketAccessRequest](#bucketaccessrequest) is necessary in order to grant credentials to access the bucket. BRs are used only for greenfield.
+A user-facing, namespaced, immutable, custom resource requesting the creation of a new bucket. A `BucketRequest` (BR) lives in the app's namespace.  In addition to a BR, a [BucketAccessRequest](#bucketaccessrequest) is necessary in order to grant credentials to access the bucket. BRs are used only for greenfield.
 
-There is a 1:1 mapping of a `BucketRequest` and the cluster scoped [Bucket](#bucket) instance, meaning there is a single `Bucket` instance for every BR. **Note**: in brownfield uses, where a `Bucket` is manually created, there is no need for a BR.
+There is a 1:1 mapping of a `BucketRequest` and the cluster scoped [Bucket](#bucket) instance, meaning there is a single `Bucket` instance for every BR. **Note**: in brownfield uses, where a `Bucket` is manually created, there is no need for a BR; `BucketAccessRequests` are used in this case.
 
 ```yaml
 apiVersion: objectstorage.k8s.io/v1alpha1
@@ -150,7 +150,7 @@ metadata:
   labels:
     - objectstorage.k8s.io/provisioner: [1]
   finalizers:
-    - objectstorage.k8s.io/user-protect [2]
+    - objectstorage.k8s.io/bucketrequest-protection [2]
 spec:
   bucketPrefix: [3]
   bucketClassName: [4]
@@ -161,14 +161,14 @@ status:
 
 1. `labels`: added by COSI.  Key’s value should be the provisioner name. Characters that do not adhere to [Kubernetes label conventions](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#syntax-and-character-set) will be converted to ‘-’.
 1. `finalizers`: added by COSI to defer `BucketRequest` deletion until backend deletion succeeds.
-1. `bucketPrefix`: (optional) prefix prepended to a COSI generated, random, backend bucket name, eg. “yosemite-photos-".
-1. `bucketClassName`: (optional) name of the `BucketClass` used to provision this request. If omitted a default bucket class is used. If the bucket class is missing and a default cannot be found, an error is logged and the request is retried (with exponential backoff).
+1. `bucketPrefix`: (optional) prefix prepended to a COSI-generated, random, backend bucket name, eg. “yosemite-photos-".
+1. `bucketClassName`: (optional) name of the `BucketClass` used to provision this request. If omitted, a default bucket class is used. If the bucket class is missing and a default cannot be found, an error is logged and the request is retried (with exponential backoff).
 1. `bucketName`: name of the cluster-wide `Bucket` instance. 
 1. `bucketAvailable`: if true the bucket has been provisioned. If false then the bucket has not been provisioned and is unable to be accessed.
 
 #### Bucket
 
-A cluster-scoped, custom resource representing the abstraction of a single backend bucket. The relevant [BucketClass](#bucketlcass) fields are copied to the `Bucket`, so that the `Bucket` instance reflects the `BucketClass` at the time of `Bucket` creation.
+A cluster-scoped, custom resource representing the abstraction of a single backend bucket. The relevant [BucketClass](#bucketclass) fields are copied to the `Bucket`, so that the `Bucket` instance reflects the `BucketClass` at the time of `Bucket` creation.
 
 There is a 1:1 mapping between a (BucketRequest)[#bucketrequest] and a `Bucket`, but a `Bucket` can exist without a BR, which is the brownfield use case. There is a 1:many mapping between a `Bucket` and [BucketAccess](#bucketaccess) instances.
 
@@ -214,12 +214,12 @@ status:
 
 1. `name`: when created by COSI, the `Bucket` name is generated in one of these formats: _"br-"+uuid_ (if BR.prefix is empty), or BR.prefix+"-"+uuid (if prefix is supplied). If an admin creates a `Bucket`, as is necessary for static brownfield access, any unique name is allowed.
 1. `labels`: added by COSI. The "objectstorage.k8s.io/provisioner" key's value is the provisioner name. The "objectstorage.k8s.io/bucket-prefix" key's value is the `BucketRequest.bucketPrefix` value when specified. Characters that do not adhere to [Kubernetes label conventions](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#syntax-and-character-set) will be converted to ‘-’.
-1. `finalizers`: added by COSI to defer `Bucket` deletion until backend deletion succeed. Implementation may add one finalizer for the BR and one for each BA pointing to this `Bucket`. **Note**: a `BucketAccess` object has one finalizer per accessing pod. So there is no access to a bucket when all `Bucket` finalizers have been removed.
+1. `finalizers`: added by COSI to defer `Bucket` deletion until backend deletion succeeds. Implementation may add one finalizer for the BR and one for each BA pointing to this `Bucket`. **Note**: a `BucketAccess` object has one finalizer per accessing pod. So there is no access to a bucket when all `Bucket` finalizers have been removed.
 1. `provisioner`: (optional) The provisioner field as defined in the `BucketClass`.
 1. `deletionPolicy`: defines the outcome when a greenfield `BucketRequest` is deleted, and is ignored for brownfield buckets. A `Bucket` cannot be deleted if it is linked to a `BucketRequest`.
-   - _Retain_: keep both the `Bucket` instance and the backend bucket and its contents. The `Bucket` instance may be marked as unavailable but it potentially may be reused (post MVP).
-   - _Delete_: when all access to the `Bucket` is complete, delete both the `Bucket` instance and the backend bucket, including all content in that bucket. If, for example, a running pod or a `BucketAccess` instance refer to the `Bucket` instance, then the delete is deferred until all accessors have been deleted.
-   - _ForceDelete_: delete both the `Bucket` instance and the backend bucket, including all content in that bucket, ignoring any accessors or workloads that may be referencing the `Bucket`.
+   - _Retain_: keep both the `Bucket` instance and the backend bucket along with its contents. This allows for admins to cleanup/migrate the data before manually deleting the `Bucket` instance and subsequently the backend bucket.
+   - _Delete_: Wait for all access to the `Bucket` to complete, then delete both the `Bucket` instance and the backend bucket. This includes all content in that bucket. If, for example, a running pod or a `BucketAccess` instance refer to the `Bucket` instance, then the delete is deferred until all accessors have been deleted.
+   - _ForceDelete_: Don't wait for accessors/workloads to complete using the bucket, but force-delete both the `Bucket` instance and the backend bucket, including all content in that bucket. BucketAccess referencing this bucket and their generated credentials are also forcibly deleted. 
 1. `bucketClassName`: (set by COSI for greenfield, and ignored for brownfield) Name of the associated bucket class.
 1. `bucketRequest`: (set by COSI for greenfield, ignored for brownfield) an `objectReference` structure referencing the associated `BucketRequest`.
 1. `allowedNamespaces`: an array of namespaces that are permitted to create new buckets.
@@ -230,7 +230,6 @@ status:
      - `s3`: data required to target a provisioned S3 bucket.
 1. `parameters`: a copy of the BucketClass parameters.
 1. `bucketAvailable`: if true the bucket has been provisioned. If false then the bucket has not been provisioned and is unable to be accessed.
-1. `bucketID`: the driver-specific, unique string ID of the backend bucket.
 
 #### BucketClass
 
@@ -245,8 +244,8 @@ apiVersion: objectstorage.k8s.io/v1alpha1
 kind: BucketClass
 metadata:
   name: 
-  annotation:
-    isDefault: [1]
+  annotations:
+    objectstorage.k8s.io/is-default-class: [1]
 provisioner: [2]
 protocol: [3]
   azureBlob:
@@ -273,8 +272,8 @@ parameters: [6]
 1. `deletionPolicy`: (required) defines the outcome when a greenfield `BucketRequest` is deleted, and is ignored for brownfield buckets.
    - _Retain_: keep both the `Bucket` instance and the backend bucket and its contents. The `Bucket` instance may be marked unavailable and it may potentially be reused (post MVP).
    - _Delete_: when all access to the `Bucket` is complete, delete both the `Bucket` instance and the backend bucket, including all content in that bucket. If, for example, a running pod or a `BucketAccess` instance refer to the `Bucket` instance, then the delete is deferred until all accessors have been deleted.
-   - _ForceDelete_: delete both the `Bucket` instance and the backend bucket, including all content in that bucket, ignoring any accessors or workloads that may be referencing the `Bucket`.
-1. `allowedNamespaces`: a list of namespaces that are permitted to either create new buckets or to access existing buckets. This list is static for the life of the `BucketClass`, but the `Bucket` instance's list of allowed namespaces can be mutated by the admin.
+   - _ForceDelete_: delete both the `Bucket` instance and the backend bucket, including all content in that bucket, ignoring any accessors or workloads that may be referencing the `Bucket`. BucketAccess referencing this bucket and their generated credentials are also forcibly deleted. 
+1. `allowedNamespaces`: a list of namespaces that are permitted to either create new buckets or to access existing buckets. This list is static for the life of the `BucketClass`, but the `Bucket` instance's list of allowed namespaces can be mutated by the admin. 
 1. `parameters`: (optional) a map of string:string key values.  Allows admins to set provisioner key-values.
 
 > Note: these protocol details are defined in the `Bucket` instance.
@@ -285,7 +284,7 @@ The Access APIs abstract the backend policy system.  Access policy and user iden
 
 #### BucketAccessRequest
 
-A user namespaced, immutable custom resource representing a request to access an existing backend bucket. A `BucketAccessRequest`(BAR) triggers the instantiation of a [BucketAccess](#bucketaccess) object, which is is the access connection to the backend bucket. A BAR references a [BucketAccessClass](#bucketaccessclass) which defines access policy. A BAR optionally defines a ServiceAccount, which supports provisioners that implement cloud provider identity integration with their respective Kubernetes offerings. To connect a BAR to the target backend bucket, it can either reference a [BucketRequest](#bucketrequest) (BR) in its namespace, or a [Bucket](#bucket) instance directly when residing in a different namespace from that of the BR. The workload pod references the BAR in its `volumes.csi.volumeAttributes` section.
+A user namespaced, immutable custom resource representing a request to access an existing backend bucket. A `BucketAccessRequest`(BAR) triggers the instantiation of a [BucketAccess](#bucketaccess) object, which is the access connection to the backend bucket. A BAR references a [BucketAccessClass](#bucketaccessclass) which defines access policy. A BAR optionally defines a ServiceAccount, which supports provisioners that implement cloud provider identity integration with their respective Kubernetes offerings. To connect a BAR to the target backend bucket, it can either reference a [BucketRequest](#bucketrequest) (BR) in its namespace, or a [Bucket](#bucket) instance directly when residing in a different namespace from that of the BR. The workload pod references the BAR in its `volumes.csi.volumeAttributes` section.
 
 There is a 1:1 mapping between a BAR and a `BucketAccess`instance. Many workload pods can reference the same BAR within the same namespace.
 
@@ -298,7 +297,7 @@ metadata:
   labels:
     objectstorage.k8s.io/provisioner: [1]
   finalizers:
-  - objectstorage.k8s.io/user-protect [2]
+  - objectstorage.k8s.io/bucketaccessrequest-protection [2]
 spec:
   bucketAccessClassName: [3]
   serviceAccountName: [4]
@@ -370,7 +369,7 @@ metadata:
 
 #### BucketAccessClass
 
-An immutable, cluster-scoped, brownfield-only, custom resource providing a way for admins to specify policies used to access buckets. A `BucketAccessClass` (BAC) is referenced by a user [BucketAccessRequest](#bucketaccessrequest) and is used to populate the [BucketAccess](#bucketaccess) instance. A BAC references a config map which is expected to define the access policy for a given provider. It is typical for these config maps to reside in each provisioner's namespace, though this is not required. Unlike a [BucketClass](#bucketclass), there is no default BAC.
+An immutable, cluster-scoped, custom resource providing a way for admins to specify policies used to access buckets. A `BucketAccessClass` (BAC) is referenced by a user [BucketAccessRequest](#bucketaccessrequest) and is used to populate the [BucketAccess](#bucketaccess) instance. A BAC references a config map which is expected to define the access policy for a given provider. It is typical for these config maps to reside in each provisioner's namespace, though this is not required. Unlike a [BucketClass](#bucketclass), there is no default BAC.
 
 ```yaml
 apiVersion: objectstorage.k8s.io/v1alpha1
@@ -451,7 +450,7 @@ Prep for brownfield:
 ### Finalizers
 The following finalizers are added by COSI to orchestrate deletion of the various COSI resources. Of note is that a finalizer is added to the two user created instances (BR and BAR) so that these intances remain available until the deletion of the associated resources (Bucket and BA) and the backend bucket have completed.
 
-+ _objectstorage.k8s.io/user-protect_, added to BRs and BARs.
++ _objectstorage.k8s.io/{bucketrequest|bucketaccessrequest}-protect_, added to BRs and BARs.
 + _objectstorage.k8s.io/br-protect_, added to a `Bucket` indicating a BR created it.
 + _objectstorage.k8s.io/ba-\<name1> ba-\<name2>..._, added to a `Bucket` for each BA referencing the `Bucket.`
 + _objectstorage.k8s.io/bar-protect_, added to `BucketAccess` indicating a BAR created it.
@@ -532,7 +531,7 @@ Here is the delete workflow:
          + COSI removes the "objectstorage.k8s.io/br-protect" finalizer from the `Bucket`, which allows it to be garbage collected.
       + If >0, COSI does not call the driver and does no further processing.
 
-+ If the deletion policy is "_ForceDeletea"_:
++ If the deletion policy is "_ForceDelete"_:
    + COSI deletes the `Bucket` instance which is deferred due to finalizers.
       + Note: new BARs cannot access the `Bucket` now.
    + COSI gets all BAs referencing the `Bucket`.
@@ -542,7 +541,7 @@ Here is the delete workflow:
    + COSI deletes all `Bucket` finalizers and the `Bucket` is garbage collected.
       + Note: pods may still try to access the backend bucket but will likely fail.
 
-+ COSI removes the BR's "objectstorage.k8s.io/user-protect" finalizer and the BR is garbage collected.
++ COSI removes the BR's "objectstorage.k8s.io/bucketrequest-protect" finalizer and the BR is garbage collected.
 
 When the pod teminates:
 + The cosi-node-adapter receives the _NodeUnstageVolume_ request from the kubelet.
@@ -583,11 +582,11 @@ Here is the workflow:
 In addition, the cosi-node-adapter sees the app pod is terminating:
 + The adapter receives a _NodeUnstageVolume_ request from the kubelet.
 + The adapter checks for pods referencing the BA.
-   + If none then it removes the "objectstorage.k8s.io/pod-\<uuid>" finalizer from the BA, which may cause it to be garbage collected.
-   + Note: when the finalizer of last BA referencing a `Bucket` is removed (and thus the last BA is deleted), the `Bucket` may be garbage collected.
+   + If none, then it removes the "objectstorage.k8s.io/pod-\<uuid>" finalizer from the BA, which may cause it to be garbage collected.
+   + Note: when the finalizer of the last BA referencing a `Bucket` is removed (and thus the last BA is deleted), the `Bucket` may be garbage collected.
 
 ## Delete BucketAccess 
-The above workflows are triggered by the user. Now we cover worflows caused by the admin, which may be necessary to handle situations where COSI doesn't clean up properly, or where, for example, a credential needs to be immediately revoked.
+The above workflows are triggered by the user. Now we cover worflows caused by the admin, which may be necessary to handle situations where COSI doesn't clean up properly or where, for example, a credential needs to be immediately revoked.
 
 The most common scenario is likely the case where a token is compromised and the admin needs to stop its use. In this case the admin may terminate the app pod(s) and delete the `BucketAccess` instances.
 
@@ -807,7 +806,7 @@ message ProvisionerRevokeBucketAccessResponse {
 
 ## Alpha -> Beta
 - Basic unit and e2e tests as outlined in the test plan.
-- Metrics in k/k for bucket create and delete, and granting and revoking bucket access.
+- Metrics in kubernetes/kubernetes for bucket create and delete, and granting and revoking bucket access.
 - Metrics in provisioner for bucket create and delete, and granting and revoking bucket access.
 
 ## Beta -> GA
